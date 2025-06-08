@@ -36,6 +36,17 @@ class Cart {
     _notifyListeners();
   }
 
+  // Total price of items in the cart
+  double get totalPrice {
+    return _items.fold(0.0, (sum, item) => sum + (double.parse(item.product.price.toString()) * item.quantity));
+  }
+
+
+  void clearCart() {
+    _items.clear();
+    _notifyListeners();
+  }
+
   void increaseQuantity(Product product) {
     final item = _items.firstWhere((item) => item.product.id == product.id);
     item.quantity++;

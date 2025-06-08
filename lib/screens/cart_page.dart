@@ -2,6 +2,7 @@
 // ignore_for_file: prefer_const_constructors
 
 import 'package:exclusive_fragrance/model/cart.dart';
+import 'package:exclusive_fragrance/screens/checkout_page.dart';
 import 'package:flutter/material.dart';
 import 'package:exclusive_fragrance/screens/shop_page.dart';
 
@@ -47,8 +48,11 @@ class _CartPageState extends State<CartPage> {
         iconTheme: IconThemeData(color: Colors.white),
       ),
       body: Cart().items.isEmpty
-          ? _buildEmptyCart()
-          : ListView.builder(
+    ? _buildEmptyCart()
+    : Column(
+        children: [
+          Expanded(
+            child: ListView.builder(
               padding: EdgeInsets.symmetric(vertical: 16),
               itemCount: Cart().items.length,
               itemBuilder: (context, index) {
@@ -56,8 +60,101 @@ class _CartPageState extends State<CartPage> {
                 return _buildCartItem(item, context);
               },
             ),
+          ),
+          _buildCartSummary(),
+        ],
+      ),
+
     );
   }
+
+
+  Widget _buildCartSummary() {
+  final total = Cart().items.fold<double>(
+      0.0,
+      (sum, item) =>
+          sum + (double.tryParse(item.product.price.replaceAll(RegExp(r'[^\d.]'), '')) ?? 0) * item.quantity);
+
+  return Container(
+    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    decoration: BoxDecoration(
+      color: Color(0xFF1E2832),
+      boxShadow: [
+        BoxShadow(color: Colors.black26, blurRadius: 10),
+      ],
+    ),
+    child: Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Total:',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 18,
+              ),
+            ),
+            Text(
+              '\$${total.toStringAsFixed(2)}',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _onCheckout,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              padding: EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              'Checkout',
+              style: TextStyle(fontSize: 16, color: Colors.white),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+
+void _onCheckout() {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Color(0xFF1E2832),
+      title: Text('Checkout',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+      content: Text(
+        'Proceeding to checkout...',
+        style: TextStyle(color: Colors.white70),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => CheckoutPage()),
+            );
+          },
+          child: Text('OK', style: TextStyle(color: Colors.green)),
+        ),
+      ],
+    ),
+  );
+}
+
 
   Widget _buildEmptyCart() {
     return Center(
@@ -113,7 +210,7 @@ class _CartPageState extends State<CartPage> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.asset(
+                child: Image.network(
                   item.product.image,
                   width: 80,
                   height: 80,
