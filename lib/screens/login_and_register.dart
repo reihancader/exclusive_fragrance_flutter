@@ -1,8 +1,17 @@
 // ignore_for_file: library_private_types_in_public_api
 
+import 'dart:io';
+import 'dart:math';
+
 import 'package:exclusive_fragrance/widgets/navigation.dart';
 import 'package:flutter/material.dart';
 import 'package:exclusive_fragrance/utils/handle_user_login.dart';
+import 'package:exclusive_fragrance/api/api.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+
 
 class LoginRegisterScreen extends StatefulWidget {
   const LoginRegisterScreen({super.key});
@@ -27,6 +36,34 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
 
   bool _rememberMe = false;
 
+  String? _selectedDate;
+  XFile? _selectedImage;
+
+  final ImagePicker _picker = ImagePicker();
+
+  Future<void> _pickImage(ImageSource source) async {
+  final pickedFile = await _picker.pickImage(source: source);
+  if (pickedFile != null) {
+    setState(() {
+      _selectedImage = pickedFile;
+    });
+  }
+  }
+
+  Future<void> _pickDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: DateTime(2000),
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedDate = picked.toIso8601String().split('T').first;
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -44,79 +81,110 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
     }
   }
 
-  void _handleLogin() {
-    String email = _emailController.text.trim();
-    String password = _passwordController.text.trim();
-    if (HandleUserLogin.login(email, password)) {
+  Future<void> _login() async {
+    final email = _emailController.text;
+    final password = _passwordController.text;
+
+    // Call the login method from ApiService
+    final token = await Api.login(email, password);
+
+    if (token != null) {
+      // If login is successful, navigate to the Screenbuilder page
+      print('Login successful, Token: $token');
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const Navigation()),
+        MaterialPageRoute(builder: (context) => Navigation()),
       );
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Invalid email or password. Please try again.'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      _showErrorDialog('Invalid credentials. Please try again.');
     }
   }
 
-  void _handleRegister() {
-    String email = _emailController.text.trim();
-    String password = _passwordController.text.trim();
-    String confirmPassword = _confirmPasswordController.text.trim();
-    String phone = _phoneController.text.trim();
-    String name = _nameController.text.trim();
-
-    if (!_validateEmail(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid email address.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    if (password != confirmPassword) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Passwords do not match.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    if (!_validatePhone(phone)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a valid phone number.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter your full name.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Registration Successful! Please log in.'),
-        backgroundColor: Colors.blue,
+   void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Error'),
+        content: Text(message),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Okay'),
+          ),
+        ],
       ),
     );
-    _tabController.animateTo(0);
   }
+
+  void _handleRegister() async {
+  String email = _emailController.text.trim();
+  String password = _passwordController.text.trim();
+  String confirmPassword = _confirmPasswordController.text.trim();
+  String phone = _phoneController.text.trim();
+  String name = _nameController.text.trim();
+  String dob = _selectedDate ?? '';
+
+  if (!_validateEmail(email)) {
+    _showErrorDialog('Please enter a valid email address.');
+    return;
+  }
+
+  if (password != confirmPassword) {
+    _showErrorDialog('Passwords do not match.');
+    return;
+  }
+
+  if (!_validatePhone(phone)) {
+    _showErrorDialog('Please enter a valid phone number.');
+    return;
+  }
+
+  if (name.isEmpty) {
+    _showErrorDialog('Please enter your full name.');
+    return;
+  }
+
+  try {
+    final uri = Uri.parse('http://13.60.243.207/api/register'); // 🔁 Replace this
+    var request = http.MultipartRequest('POST', uri);
+
+    request.fields['name'] = name;
+    request.fields['email'] = email;
+    request.fields['password'] = password;
+    request.fields['password_confirmation'] = confirmPassword;
+    request.fields['phone'] = phone;
+    request.fields['date_of_birth'] = dob;
+
+    if (_selectedImage != null) {
+      request.files.add(await http.MultipartFile.fromPath(
+        'Profile_photo',
+        _selectedImage!.path,
+        filename: (_selectedImage!.path),
+      ));
+    }
+
+    var response = await request.send();
+    var responseBody = await response.stream.bytesToString();
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Registration Successful! Please log in.'),
+          backgroundColor: Colors.blue,
+        ),
+      );
+      _tabController.animateTo(0); // move to login tab
+    } else {
+      final error = json.decode(responseBody);
+      _showErrorDialog(error['message'] ?? 'Registration failed.');
+    }
+  } catch (e) {
+    _showErrorDialog('Error: ${e.toString()}');
+  }
+}
+
 
   bool _validateEmail(String email) {
     return RegExp(
@@ -278,7 +346,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _handleLogin,
+                    onPressed: _login,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFFF5D57A),
                       padding: EdgeInsets.symmetric(
@@ -304,112 +372,205 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
           ),
 
           // Register Screen
-          _buildForm(
-            Column(
-              mainAxisSize: MainAxisSize.min,
+      _buildForm(
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'Full Name',
+                filled: true,
+                fillColor: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _emailController,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                filled: true,
+                fillColor: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _passwordController,
+              decoration: InputDecoration(
+                labelText: 'Password',
+                filled: true,
+                fillColor: Colors.white,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscureRegisterPassword
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                    color: Colors.grey,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _obscureRegisterPassword = !_obscureRegisterPassword;
+                    });
+                  },
+                ),
+              ),
+              obscureText: _obscureRegisterPassword,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _confirmPasswordController,
+              decoration: InputDecoration(
+                labelText: 'Confirm Password',
+                filled: true,
+                fillColor: Colors.white,
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscureConfirmPassword
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                    color: Colors.grey,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _obscureConfirmPassword = !_obscureConfirmPassword;
+                    });
+                  },
+                ),
+              ),
+              obscureText: _obscureConfirmPassword,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _phoneController,
+              decoration: const InputDecoration(
+                labelText: 'Phone Number',
+                filled: true,
+                fillColor: Colors.white,
+              ),
+              keyboardType: TextInputType.phone,
+            ),
+            const SizedBox(height: 12),
+            Row(
               children: [
-                TextField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Full Name',
-                    filled: true,
-                    fillColor: Colors.white,
+                Expanded(
+                  child: Text(
+                    _selectedDate != null
+                        ? 'DOB: $_selectedDate'
+                        : 'No date selected',
+                    style: const TextStyle(color: Colors.white),
                   ),
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _emailController,
-                  decoration: const InputDecoration(
-                    labelText: 'Email',
-                    filled: true,
-                    fillColor: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _passwordController,
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    filled: true,
-                    fillColor: Colors.white,
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscureRegisterPassword
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                        color: Colors.grey,
+                TextButton(
+                  onPressed: _pickDate,
+                  child: const Text(
+                    'Pick Date',
+                    style: TextStyle(color: Colors.black, fontSize: 14, fontFamily: 'Open Sans', fontWeight: FontWeight.w400),
+                    ),
+                    style: ButtonStyle(
+                      backgroundColor: MaterialStateProperty.all<Color>(
+                        const Color(0xFFF5D57A),
                       ),
-                      onPressed: () {
-                        setState(() {
-                          _obscureRegisterPassword = !_obscureRegisterPassword;
-                        });
-                      },
+                      shape: MaterialStateProperty.all<RoundedRectangleBorder>(
+                        RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+
+              children: [
+                _selectedImage != null
+                    ? Image.file(
+                        File(_selectedImage!.path),
+                        width: 80,
+                        height: 80,
+                      )
+                    : const Text('No image selected',
+                        style: TextStyle(color: Colors.white)),
+                TextButton(
+                  onPressed: () {
+                    showModalBottomSheet(
+                      context: context,
+                      builder: (context) => SafeArea(
+                        child: Wrap(
+                          children: [
+                            ListTile(
+                              leading: const Icon(Icons.camera_alt),
+                              title: const Text('Take Photo'),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _pickImage(ImageSource.camera);
+                              },
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.photo_library),
+                              title: const Text('Choose from Gallery'),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _pickImage(ImageSource.gallery);
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                  child: const Text(
+                    'Pick Profile Photo',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontSize: 14,
+                      fontFamily: 'Open Sans',
+                      fontWeight: FontWeight.w400,
                     ),
                   ),
-                  obscureText: _obscureRegisterPassword,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _confirmPasswordController,
-                  decoration: InputDecoration(
-                    labelText: 'Confirm Password',
-                    filled: true,
-                    fillColor: Colors.white,
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _obscureConfirmPassword
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                        color: Colors.grey,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _obscureConfirmPassword = !_obscureConfirmPassword;
-                        });
-                      },
+                  style: ButtonStyle(
+                    backgroundColor: MaterialStateProperty.all<Color>(
+                      const Color(0xFFF5D57A),
                     ),
-                  ),
-                  obscureText: _obscureConfirmPassword,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _phoneController,
-                  decoration: const InputDecoration(
-                    labelText: 'Phone Number',
-                    filled: true,
-                    fillColor: Colors.white,
-                  ),
-                  keyboardType: TextInputType.phone,
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _handleRegister,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFFF5D57A),
-                      padding: EdgeInsets.symmetric(
-                        vertical: isLandscape ? 14 : 16,
-                      ),
-                      shape: RoundedRectangleBorder(
+                    shape: MaterialStateProperty.all<RoundedRectangleBorder>(
+                      RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                    child: Text(
-                      "Register",
-                      style: TextStyle(
-                        color: const Color(0xFF151E25),
-                        fontSize: isLandscape ? 14 : 16,
-                        fontFamily: 'Open Sans',
-                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _handleRegister,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFF5D57A),
+                  padding: EdgeInsets.symmetric(
+                    vertical: isLandscape ? 14 : 16,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text(
+                  "Register",
+                  style: TextStyle(
+                    color: const Color(0xFF151E25),
+                    fontSize: isLandscape ? 14 : 16,
+                    fontFamily: 'Open Sans',
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+              ],
       ),
     );
   }
