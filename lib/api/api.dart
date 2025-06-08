@@ -14,8 +14,7 @@ class Api {
     'password': password,
   };
 
-  print('Login API URL: $apiUrl');
-  print('Login Data: $data');
+
   try {
     final response = await http.post(
       Uri.parse(apiUrl),
@@ -25,8 +24,7 @@ class Api {
       body: jsonEncode(data),
     );
 
-    print('Login Status Code: ${response.statusCode}');
-    print('Login Body: ${response.body}');
+    
 
     if (response.statusCode == 200) {
       var loginResponse = jsonDecode(response.body);

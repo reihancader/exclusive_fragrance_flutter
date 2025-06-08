@@ -4,10 +4,11 @@ import 'dart:convert';
 import 'package:exclusive_fragrance/screens/login_and_register.dart';
 import 'package:exclusive_fragrance/utils/handle_user_login.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 
 class AccountPage extends StatefulWidget {
-   const AccountPage({super.key});
+  const AccountPage({super.key});
 
   @override
   State<AccountPage> createState() => _AccountPageState();
@@ -16,39 +17,152 @@ class AccountPage extends StatefulWidget {
 class _AccountPageState extends State<AccountPage> {
   Map<String, dynamic>? userData;
   bool isLoading = true;
+  String? _address = 'Loading...';
+  bool _locationError = false;
+  bool _locationLoading = false;
 
   @override
   void initState() {
     super.initState();
     fetchUserInfo();
+    _getCurrentLocation();
+  }
+
+  Future<void> _getCurrentLocation() async {
+    if (_locationLoading) return;
+    
+    setState(() {
+      _locationLoading = true;
+      _locationError = false;
+    });
+
+    try {
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        throw Exception('Location services are disabled');
+      }
+
+      // Check location permissions
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.deniedForever) {
+        throw Exception('Location permissions are permanently denied');
+      }
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission != LocationPermission.whileInUse && 
+            permission != LocationPermission.always) {
+          throw Exception('Location permissions are denied');
+        }
+      }
+
+      // Get current position with timeout
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.low, // Use low accuracy for faster response
+      ).timeout(const Duration(seconds: 5));
+
+      // Get address with retry logic
+      await _getAddressWithRetry(position);
+    } catch (e) {
+      _handleLocationError('Error getting location: ${e.toString()}');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _locationLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _getAddressWithRetry(Position position, {int retryCount = 0}) async {
+    try {
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      ).timeout(const Duration(seconds: 5));
+
+      if (placemarks.isNotEmpty) {
+        Placemark place = placemarks.first;
+        String address = _formatAddress(place);
+        
+        if (mounted) {
+          setState(() {
+            _address = address;
+            _locationError = false;
+          });
+        }
+      } else {
+        throw Exception('No address information found');
+      }
+    } catch (e) {
+      if (retryCount < 2) { // Retry up to 2 times
+        await Future.delayed(const Duration(seconds: 1));
+        await _getAddressWithRetry(position, retryCount: retryCount + 1);
+      } else {
+        throw e; // Re-throw after retries exhausted
+      }
+    }
+  }
+
+  String _formatAddress(Placemark place) {
+    final addressParts = [
+      place.street,
+      place.subLocality,
+      place.locality,
+      place.postalCode,
+      place.country
+    ].where((part) => part != null && part.isNotEmpty).toList();
+
+    return addressParts.isNotEmpty 
+        ? addressParts.join(', ')
+        : 'Address not available';
+  }
+
+  void _handleLocationError(String message) {
+    debugPrint(message);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      setState(() {
+        _locationError = true;
+        _address = 'Location service unavailable';
+      });
+    }
   }
 
   Future<void> fetchUserInfo() async {
-        final SharedPreferences prefs = await SharedPreferences.getInstance();
-
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
     try {
       final response = await http.get(
-        Uri.parse('https://your-api-endpoint.com/user/info'),
+        Uri.parse('http://13.60.243.207/api/user/profile'),
         headers: {
-          'Authorization': 'Bearer ${prefs.getString('token')}', // if you use token
+          'Authorization': 'Bearer ${prefs.getString('token')}',
           'Content-Type': 'application/json',
         },
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
-        setState(() {
-          userData = json.decode(response.body);
-          isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            userData = json.decode(response.body);
+            isLoading = false;
+          });
+        }
       } else {
-        throw Exception('Failed to load user data');
+        throw Exception('Failed to load user data: ${response.statusCode}');
       }
     } catch (e) {
-      print('Error fetching user info: $e');
-      // Optional: Show fallback or error UI
-      setState(() {
-        isLoading = false;
-      });
+      debugPrint('Error fetching user info: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading user information')),
+        );
+        setState(() {
+          isLoading = false;
+        });
+      }
     }
   }
 
@@ -105,7 +219,7 @@ class _AccountPageState extends State<AccountPage> {
             Divider(color: Colors.white24),
             _buildInfoRow('Name', userData!['name']),
             _buildInfoRow('Email', userData!['email']),
-            _buildInfoRow('Phone', userData!['phone'] ?? 'N/A'),
+            _buildInfoRow('Phone', userData!['contact_number'] ?? 'N/A'),
           ],
         ),
       ),
@@ -131,15 +245,59 @@ class _AccountPageState extends State<AccountPage> {
             Divider(color: Colors.white24),
             Padding(
               padding: EdgeInsets.only(top: 8),
-              child: Text(userData!['shipping_address'] ?? 'No address found',
-                  style: TextStyle(color: Colors.white70)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(userData?['shipping_address'] ?? 'No address found',
+                      style: TextStyle(color: Colors.white70)),
+                  SizedBox(height: 8),
+                  if (_locationLoading)
+                    Row(
+                      children: [
+                        SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white60,
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Text('Getting location...',
+                            style: TextStyle(color: Colors.white60, fontSize: 13)),
+                      ],
+                    )
+                  else if (_locationError)
+                    Row(
+                      children: [
+                        Icon(Icons.warning_amber_rounded, size: 16, color: Colors.orange),
+                        SizedBox(width: 8),
+                        Text(_address!,
+                            style: TextStyle(color: Colors.orange, fontSize: 13)),
+                      ],
+                    )
+                  else
+                    Row(
+                      children: [
+                        Icon(Icons.location_on, size: 16, color: Colors.white60),
+                        SizedBox(width: 8),
+                        Flexible(
+                          child: Text(_address!,
+                              style: TextStyle(color: Colors.white60, fontSize: 13)),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
             ),
             Align(
               alignment: Alignment.centerRight,
               child: TextButton(
-                onPressed: () {},
-                child: Text('Edit Address',
-                    style: TextStyle(color: Color(0xFF00C4FF))),
+                onPressed: _locationLoading ? null : _getCurrentLocation,
+                child: Text(
+                  _locationError ? 'Retry Location' : 'Update Location',
+                  style: TextStyle(color: Color(0xFF00C4FF)),
+                ),
               ),
             )
           ],
@@ -167,7 +325,16 @@ class _AccountPageState extends State<AccountPage> {
                     fontSize: 18,
                     fontWeight: FontWeight.bold)),
             Divider(color: Colors.white24),
-            ...orders.map<Widget>((order) => _buildOrderItem(order)).toList(),
+            if (orders.isEmpty)
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                  child: Text('No orders yet',
+                      style: TextStyle(color: Colors.white70)),
+                ),
+              )
+            else
+              ...orders.map<Widget>((order) => _buildOrderItem(order)).toList(),
           ],
         ),
       ),
