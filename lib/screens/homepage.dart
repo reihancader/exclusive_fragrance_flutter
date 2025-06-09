@@ -7,7 +7,10 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:battery_plus/battery_plus.dart';
+import 'package:provider/provider.dart';
 import 'product_card.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:exclusive_fragrance/provider/network_provider.dart';
 
 
 class HomePage extends StatefulWidget {
@@ -24,6 +27,7 @@ class _HomePageState extends State<HomePage> {
   int batteryLevel = 0;
   final Battery _battery = Battery();
 
+  
   @override
   void initState() {
     super.initState();
@@ -83,8 +87,12 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  
+
   @override
   Widget build(BuildContext context) {
+    final isConnected = Provider.of<NetworkProvider>(context).isOnline;
+
     final bool isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
     final double screenWidth = MediaQuery.of(context).size.width;
@@ -140,7 +148,18 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
-
+            
+            if (!isConnected)
+              Container(
+                color: Colors.redAccent,
+                width: double.infinity,
+                padding: EdgeInsets.all(8),
+                child: Text(
+                  'No Internet Connection',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
             // Banner
             Container(
               width: double.infinity,
@@ -159,6 +178,7 @@ class _HomePageState extends State<HomePage> {
             ),
 
             SizedBox(height: 32),
+            
 
             // Content based on loading state
             if (isLoading)
@@ -277,7 +297,9 @@ class _HomePageState extends State<HomePage> {
             ],
           ],
         ),
+        
       ),
+      
     );
   }
 }

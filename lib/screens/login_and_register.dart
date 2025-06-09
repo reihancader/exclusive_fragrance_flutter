@@ -3,12 +3,14 @@
 import 'dart:io';
 import 'dart:math';
 
+import 'package:exclusive_fragrance/provider/theme_provider.dart';
 import 'package:exclusive_fragrance/widgets/navigation.dart';
 import 'package:flutter/material.dart';
 import 'package:exclusive_fragrance/utils/handle_user_login.dart';
 import 'package:exclusive_fragrance/api/api.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
@@ -40,6 +42,8 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
   XFile? _selectedImage;
 
   final ImagePicker _picker = ImagePicker();
+
+
 
   Future<void> _pickImage(ImageSource source) async {
   final pickedFile = await _picker.pickImage(source: source);
@@ -227,6 +231,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
 
   @override
   Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
     final screenWidth = MediaQuery.of(context).size.width;
@@ -247,7 +252,11 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: const Color(0xFFF5D57A),
-          labelColor: const Color(0xFF151E25),
+          labelColor: themeProvider.isDarkMode
+              ? const Color(0xFF151E25) : Colors.white,
+          unselectedLabelColor: themeProvider.isDarkMode
+              ? Colors.white70
+              : Color(0xFFF5D57A),
           labelStyle: TextStyle(
             fontSize: isLandscape ? 14 : 16,
             fontFamily: 'Open Sans',
@@ -318,7 +327,7 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                             child: Text(
                               "Remember Me",
                               style: TextStyle(
-                                color: Colors.white,
+                                color: Theme.of(context).textTheme.bodyLarge?.color,
                                 fontSize: isLandscape ? 12 : 14,
                                 fontFamily: 'Open Sans',
                                 fontWeight: FontWeight.w400,
@@ -457,12 +466,19 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                     _selectedDate != null
                         ? 'DOB: $_selectedDate'
                         : 'No date selected',
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(
+                      color: themeProvider.isDarkMode
+                          ? Colors.white
+                          : Colors.black,
+                      fontSize: 14,
+                      fontFamily: 'Open Sans',
+                      fontWeight: FontWeight.w400,
+                    ),
                   ),
                 ),
                 TextButton(
                   onPressed: _pickDate,
-                  child: const Text(
+                  child: Text(
                     'Pick Date',
                     style: TextStyle(color: Colors.black, fontSize: 14, fontFamily: 'Open Sans', fontWeight: FontWeight.w400),
                     ),
@@ -490,8 +506,8 @@ class _LoginRegisterScreenState extends State<LoginRegisterScreen>
                         width: 80,
                         height: 80,
                       )
-                    : const Text('No image selected',
-                        style: TextStyle(color: Colors.white)),
+                    :  Text('No image selected',
+                        style: TextStyle(color: themeProvider.isDarkMode ? Colors.white : Colors.black)),
                 TextButton(
                   onPressed: () {
                     showModalBottomSheet(

@@ -6,6 +6,8 @@ import 'package:exclusive_fragrance/utils/handle_user_login.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:intl/intl.dart';
+
 
 class AccountPage extends StatefulWidget {
   const AccountPage({super.key});
@@ -26,84 +28,106 @@ class _AccountPageState extends State<AccountPage> {
     super.initState();
     fetchUserInfo();
     _getCurrentLocation();
+    fetchOrders();
   }
 
   Future<void> _getCurrentLocation() async {
-    if (_locationLoading) return;
-    
-    setState(() {
-      _locationLoading = true;
-      _locationError = false;
-    });
+  if (_locationLoading) return;
 
+  setState(() {
+    _locationLoading = true;
+    _locationError = false;
+  });
+
+  try {
+    // Check if location services are enabled
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      await Geolocator.openLocationSettings();
+      throw Exception('Location services are disabled');
+    }
+
+    // Check and request permission
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      await Geolocator.openAppSettings();
+      throw Exception('Location permission permanently denied');
+    }
+
+    if (permission != LocationPermission.whileInUse && 
+        permission != LocationPermission.always) {
+      throw Exception('Location permission not granted');
+    }
+
+    // Try getting location with high accuracy, fallback to low
+    Position position;
     try {
-      // Check if location services are enabled
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        throw Exception('Location services are disabled');
-      }
-
-      // Check location permissions
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.deniedForever) {
-        throw Exception('Location permissions are permanently denied');
-      }
-
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission != LocationPermission.whileInUse && 
-            permission != LocationPermission.always) {
-          throw Exception('Location permissions are denied');
-        }
-      }
-
-      // Get current position with timeout
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.low, // Use low accuracy for faster response
+      position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
       ).timeout(const Duration(seconds: 5));
+    } catch (_) {
+      position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.low,
+      ).timeout(const Duration(seconds: 5));
+    }
 
-      // Get address with retry logic
-      await _getAddressWithRetry(position);
-    } catch (e) {
-      _handleLocationError('Error getting location: ${e.toString()}');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _locationLoading = false;
-        });
-      }
+    
+
+    // Get address with retry logic
+    await _getAddressWithRetry(position);
+  } catch (e) {
+    _handleLocationError('Error getting location: ${e.toString()}');
+  } finally {
+    if (mounted) {
+      setState(() {
+        _locationLoading = false;
+      });
     }
   }
+}
+
 
   Future<void> _getAddressWithRetry(Position position, {int retryCount = 0}) async {
-    try {
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      ).timeout(const Duration(seconds: 5));
+  try {
+    List<Placemark> placemarks = await placemarkFromCoordinates(
+      position.latitude,
+      position.longitude,
+    ).timeout(const Duration(seconds: 5));
 
-      if (placemarks.isNotEmpty) {
-        Placemark place = placemarks.first;
-        String address = _formatAddress(place);
-        
-        if (mounted) {
-          setState(() {
-            _address = address;
-            _locationError = false;
-          });
-        }
-      } else {
-        throw Exception('No address information found');
+    if (placemarks.isNotEmpty) {
+      Placemark place = placemarks.first;
+
+      String address = _formatAddress(place);
+
+      if (mounted) {
+        setState(() {
+          _address = address;
+          _locationError = false;
+        });
       }
-    } catch (e) {
-      if (retryCount < 2) { // Retry up to 2 times
-        await Future.delayed(const Duration(seconds: 1));
-        await _getAddressWithRetry(position, retryCount: retryCount + 1);
-      } else {
-        throw e; // Re-throw after retries exhausted
+    } else {
+      throw Exception('No address information found');
+    }
+  } catch (e) {
+    if (retryCount < 2) {
+      await Future.delayed(const Duration(seconds: 1));
+      await _getAddressWithRetry(position, retryCount: retryCount + 1);
+    } else {
+      if (mounted) {
+        setState(() {
+          _address = 'Address not found';
+          _locationError = true;
+        });
       }
+      print('Address lookup failed: $e');
     }
   }
+}
+
 
   String _formatAddress(Placemark place) {
     final addressParts = [
@@ -120,17 +144,15 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   void _handleLocationError(String message) {
-    debugPrint(message);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
-      setState(() {
-        _locationError = true;
-        _address = 'Location service unavailable';
-      });
-    }
+  print(message); // For debugging
+  if (mounted) {
+    setState(() {
+      _address = 'Unable to get address';
+      _locationError = true;
+    });
   }
+}
+
 
   Future<void> fetchUserInfo() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -162,6 +184,36 @@ class _AccountPageState extends State<AccountPage> {
         setState(() {
           isLoading = false;
         });
+      }
+    }
+  }
+
+  //fetch orders
+  Future<void> fetchOrders() async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    try {
+      final response = await http.get(
+        Uri.parse('http://13.60.243.207/api/orders'),
+        headers: {
+          'Authorization': 'Bearer ${prefs.getString('token')}',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        if (mounted) {
+          setState(() {
+            userData!['orders'] = json.decode(response.body);
+          });
+        }
+      } else {
+        throw Exception('Failed to load orders: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('Error fetching orders: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading orders')),
+        );
       }
     }
   }
@@ -342,6 +394,25 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Widget _buildOrderItem(Map<String, dynamic> order) {
+    // Add null checks and default values
+    final orderId = order['id']?.toString() ?? 'N/A';
+    final status = order['order_status']?.toString() ?? 'Pending';
+    final total = (order['total'] as num?)?.toDouble() ?? 0.0;
+    final items = (order['items']) ?? [];
+    
+    final rawDate = order['order_date']?.toString();
+    String formattedDate = 'Unknown date';
+
+if (rawDate != null) {
+  try {
+    final parsedDate = DateTime.parse(rawDate);
+    formattedDate = DateFormat('dd MMM yyyy, h:mm a').format(parsedDate);
+  } catch (e) {
+    // If parsing fails, fallback to raw string
+    formattedDate = rawDate;
+  }
+}
+
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 8),
       child: Column(
@@ -349,33 +420,40 @@ class _AccountPageState extends State<AccountPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Order ${order['order_id']}',
+              Text('Order $orderId',
                   style: TextStyle(
-                      color: Colors.white, fontWeight: FontWeight.w500)),
-              Text(order['status'],
-                  style: TextStyle(
-                    color: order['status'] == 'Delivered'
-                        ? Colors.green
-                        : Colors.amber,
+                      color: Colors.white, 
+                      fontWeight: FontWeight.w500,
                   )),
+              Text(
+                status,
+                style: TextStyle(
+                  color: status.toLowerCase() == 'delivered'
+                      ? Colors.green
+                      : Colors.amber,
+                ),
+              ),
             ],
           ),
           SizedBox(height: 4),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(order['date'], style: TextStyle(color: Colors.white70)),
-              Text('Rs ${order['total'].toStringAsFixed(2)}',
-                  style: TextStyle(color: Colors.white)),
+              Text(formattedDate, style: TextStyle(color: Colors.white70)),
+              Text(
+                'Rs ${total.toStringAsFixed(2)}',
+                style: TextStyle(color: Colors.white),
+              ),
             ],
           ),
           SizedBox(height: 4),
-          Text(
-            (order['items'] as List<dynamic>).join(', '),
-            style: TextStyle(color: Colors.white70, fontSize: 14),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+          if (items.isNotEmpty)
+            Text(
+              items.join(', '),
+              style: TextStyle(color: Colors.white70, fontSize: 14),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           Divider(color: Colors.white24),
         ],
       ),
